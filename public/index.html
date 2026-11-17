@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#377A57" />
+    <meta
+      name="description"
+      content="HabitTracker：設定每日、每週、每月任務，用完成率與趨勢圖記錄每一小步。"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="HabitTracker" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="/icons/apple-touch-icon.png"
+    />
+    <title>HabitTracker</title>
+    <script>
+      try {
+        var night = localStorage.getItem("slowday.appearance.v1") === "night";
+        document.documentElement.dataset.appearance = night
+          ? "night"
+          : "bright";
+        document.documentElement.style.colorScheme = night ? "dark" : "light";
+        document.querySelector('meta[name="theme-color"]').content = night
+          ? "#121A16"
+          : "#F6F7F2";
+      } catch (_) {}
+    </script>
+    <style id="expo-reset">
+      html,
+      body {
+        height: 100%;
+        background: #f6f7f2;
+      }
+      html[data-appearance="night"],
+      html[data-appearance="night"] body {
+        background: #121a16;
+      }
+      html[data-appearance="night"] :focus-visible {
+        outline-color: #78c496;
+      }
+      body {
+        overflow: hidden;
+        margin: 0;
+      }
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+      :focus-visible {
+        outline: 2px solid #377a57;
+        outline-offset: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>請啟用 JavaScript，以使用HabitTracker的任務與統計功能。</noscript>
+    <div id="root"></div>
+  </body>
+</html>

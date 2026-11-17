@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "HabitTracker",
+  "short_name": "HabitTracker",
+  "description": "設定每日、每週、每月任務，追蹤完成率與每日活躍紀錄。",
+  "lang": "zh-Hant",
+  "start_url": "/?tab=dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F6F7F2",
+  "theme_color": "#377A57",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
