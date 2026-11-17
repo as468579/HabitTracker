@@ -2,7 +2,7 @@
 
 以 Expo SDK 58、React Native Web、TypeScript 與 Expo Router 製作的任務追蹤 Web App。支援手機與桌面瀏覽器、加入主畫面與完成首次快取後的離線使用。
 
-主要操作與部署方式見 [Web App 說明](WEB-APP.md)。網站資料保存在目前瀏覽器與網址，未提供雲端同步。
+主要操作與部署方式見 [Web App 說明](WEB-APP.md)。主要資料使用遠端 D1，依登入帳號同步；詳見 [雲端同步架構](CLOUD-SYNC.md)。
 
 ## 啟動
 
@@ -15,7 +15,7 @@ npm start
 
 使用相容 SDK 58 的 Expo Go，或 Expo development build 開啟手機版本。`npm run android` 可開啟已設定好的 Android 模擬器；iOS 模擬器需要 macOS。網頁預覽執行 `npm run web`。
 
-正式網頁版執行 `npm run build:web`，再執行 `npm run preview:web` 以 http://localhost:8083 檢視。發佈時將 dist/ 部署至 HTTPS 網站即可。
+正式網頁版執行 `npm run build:web`，再執行 `npm run preview:web` 以 http://localhost:8083 檢視。正式部署包含 dist/server Worker、dist/client PWA、D1 binding 與 migration；不能只部署靜態檔。
 
 ## 功能與規則
 
@@ -28,8 +28,8 @@ npm start
 - Daily Routine 月曆：顯示全部完成／部分完成／未完成，可點選日期查看與補登每日任務，並同步更新方格圖及統計。未來日期不可勾選；未安排任務的日期不計入月曆達標分母。
 - 連續達標計算所有每日任務都完成的連續天數；今天未達標時，從昨天往前算。
 - 編輯時保留頻率，避免歷史紀錄與週期產生矛盾。如需不同頻率，另建任務。
-- AsyncStorage 本機保存，無帳號、後端與跨裝置同步。讀取失敗時停止寫入以保護既有資料；寫入失敗會提示重試。
-- 首次開啟載入有標示的範例資料。按「開始使用」並確認後清空，建立個人任務。
+- 遠端 D1 保存，ChatGPT 登入與帳號隔離；版本 CAS 防止其他裝置的資料被覆寫。外觀偏好仍使用 AsyncStorage。
+- 首次雲端登入從空白開始，不預載範例或匯入舊本機資料。
 
 ## 驗證
 
@@ -42,7 +42,7 @@ npm run build:web
 
 核心週期與統計邏輯位於 `src/domain.ts`，畫面位於 `src/TrackerApp.tsx`，路由位於 `src/app/`。測試涵蓋跨年週期、閏年、每月月底、重複任務重置、歷史統計、連續天數及資料讀取。
 
-目前為本機 App 初版，未加入推播、登入或雲端同步。已加入 EAS 商店建置設定與隱私頁，但尚未產生簽署安裝包或上架；仍需發行者帳號、正式資料及實機驗證。
+目前 Web App 已加入帳號與雲端同步，未加入推播。已加入 EAS 商店建置設定與隱私頁，但尚未產生簽署安裝包或上架；仍需發行者帳號、正式資料及實機驗證。
 
 ## 記帳聊天室
 
