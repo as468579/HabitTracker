@@ -4,7 +4,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createExpenseApi } = require("../server/expense-api.cjs");
 const handleExpenseApi = createExpenseApi();
-const root = path.resolve(__dirname, "../dist");
+const { createPreviewRecords } = require("../server/preview-records.cjs");
+const handleRecords = createPreviewRecords();
+const root = path.resolve(__dirname, fs.existsSync(path.join(__dirname, "../dist/client")) ? "../dist/client" : "../dist");
 const port = Number(process.env.PORT || 8083);
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -19,6 +21,7 @@ const mime = {
 http
   .createServer(async (req, res) => {
     try {
+      if (await handleRecords(req, res)) return;
       if (await handleExpenseApi(req, res)) return;
       const requested = decodeURIComponent(
         new URL(req.url, "http://localhost").pathname,

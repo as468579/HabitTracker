@@ -214,7 +214,8 @@ export function WebAppPanel() {
         </View>
       )}
       <Text style={styles.caption}>
-        任務保存在此瀏覽器、此網址。清除網站資料或使用無痕模式，可能讓紀錄消失；不同裝置與網址不會自動同步。
+        任務與記帳資料保存在遠端資料庫，同一帳號可跨裝置同步。離線可開啟
+        App，但讀取與修改雲端資料需要網路。
       </Text>
     </View>
   );

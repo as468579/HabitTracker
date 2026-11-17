@@ -12,7 +12,8 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useCloudStore } from "./useCloudStore";
+import { httpTransport } from "./cloud-store";
 import { Feather } from "@expo/vector-icons";
 import type { AppTheme, UiStyles } from "./theme";
 import { useThemedStyles } from "./Appearance";
@@ -29,7 +30,10 @@ import {
   validateExpense,
 } from "./expenses";
 
-const KEY = "slowday.expenses.v1";
+const expenseTransport = httpTransport<ExpenseStore>(
+  "expenses",
+  readExpenseStore,
+);
 function todayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -86,10 +90,11 @@ export default function ExpenseChat() {
   const { theme, styles: s } = useThemedStyles(createStyles);
   const { width } = useWindowDimensions();
   const wide = width >= 1100;
-  const [store, setStore] = useState<ExpenseStore>(emptyExpenseStore);
+  const cloud = useCloudStore(expenseTransport, emptyExpenseStore());
+  const { data: store, ready } = cloud;
+  const loadFailed = cloud.blocked || cloud.busy;
   const current = useRef(store);
-  const [ready, setReady] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const currentRevision = useRef(cloud.revision);
   const [error, setError] = useState("");
   const [inRoom, setInRoom] = useState(false);
   const [text, setText] = useState("");
@@ -97,34 +102,27 @@ export default function ExpenseChat() {
   const lock = useRef(false);
   const [connected, setConnected] = useState(false);
   const [checking, setChecking] = useState(true);
-  const [editor, setEditor] = useState<Expense | "new" | null>(null);
+  const [editor, setEditorRaw] = useState<Expense | "new" | null>(null);
+  const editorRevision = useRef(0);
+  const setEditor = (value: Expense | "new" | null) => {
+    if (value !== null) editorRevision.current = cloud.revision;
+    setEditorRaw(value);
+  };
   const [deleting, setDeleting] = useState<Expense | null>(null);
   const alive = useRef(true);
   const abort = useRef<AbortController | null>(null);
   const chatScroll = useRef<ComponentRef<typeof ScrollView>>(null);
   useEffect(() => {
     alive.current = true;
-    AsyncStorage.getItem(KEY)
-      .then((raw) => {
-        if (!alive.current) return;
-        const data = raw ? readExpenseStore(raw) : emptyExpenseStore();
-        current.current = data;
-        setStore(data);
-      })
-      .catch(() => {
-        if (alive.current) {
-          setLoadFailed(true);
-          setError("記帳資料讀取失敗，已停止寫入，請重新開啟頁面後再試。");
-        }
-      })
-      .finally(() => {
-        if (alive.current) setReady(true);
-      });
     return () => {
       alive.current = false;
       abort.current?.abort();
     };
   }, []);
+  useEffect(() => {
+    current.current = store;
+    currentRevision.current = cloud.revision;
+  }, [store, cloud.revision]);
   const checkConnection = () => {
     return fetch("/api/expenses/status", {
       cache: "no-store",
@@ -144,10 +142,14 @@ export default function ExpenseChat() {
   useEffect(() => {
     void checkConnection();
   }, []);
-  async function persist(next: ExpenseStore) {
-    await AsyncStorage.setItem(KEY, JSON.stringify(next));
+  async function persist(
+    next: ExpenseStore,
+    revision = currentRevision.current,
+  ) {
+    if (!(await cloud.controller.save(next, revision)))
+      throw new Error("記帳資料尚未確認儲存，請同步後再試。");
     current.current = next;
-    if (alive.current) setStore(next);
+    currentRevision.current = cloud.controller.getSnapshot().revision;
   }
   async function processMessage(requestId: string) {
     const snapshot = current.current;
@@ -257,11 +259,15 @@ export default function ExpenseChat() {
       const entries = current.current.entries.some((e) => e.id === draft.id)
         ? current.current.entries.map((e) => (e.id === draft.id ? draft : e))
         : [...current.current.entries, draft];
-      await persist({ ...current.current, entries });
+      await persist({ ...current.current, entries }, editorRevision.current);
       setEditor(null);
       setError("");
     } catch {
-      setError("消費紀錄保存失敗，尚未記帳。");
+      editorRevision.current = cloud.controller.getSnapshot().revision;
+      setError(
+        cloud.controller.getSnapshot().error ||
+          "消費紀錄保存失敗，請同步後確認紀錄。",
+      );
     } finally {
       lock.current = false;
       setBusy(false);
@@ -327,7 +333,7 @@ export default function ExpenseChat() {
           <Glyph name="refresh-cw" size={16} />
         </Pressable>
       </View>
-      {error ? (
+      {error || cloud.error ? (
         <View style={s.error}>
           <Glyph name="info" color={theme.colors.orange} size={16} />
           <Text
@@ -338,7 +344,7 @@ export default function ExpenseChat() {
               flex: 1,
             }}
           >
-            {error}
+            {error || cloud.error}
           </Text>
         </View>
       ) : null}
@@ -617,14 +623,15 @@ export default function ExpenseChat() {
           )}
           <View style={s.ledgerFoot}>
             <Glyph name="lock" size={12} color={theme.colors.muted} />
-            <Text style={s.tiny}>紀錄保存在此瀏覽器，尚無跨裝置同步。</Text>
+            <Text style={s.tiny}>紀錄保存在雲端，同一帳號可跨裝置同步。</Text>
           </View>
         </View>
       </View>
       {editor && (
         <ExpenseEditor
           entry={editor}
-          busy={busy}
+          busy={busy || loadFailed}
+          saveError={error || cloud.error}
           onClose={() => setEditor(null)}
           onSave={(entry) => void saveExpense(entry)}
           onDelete={(entry) => {
@@ -683,12 +690,14 @@ export default function ExpenseChat() {
 
 function ExpenseEditor({
   entry,
+  saveError,
   busy,
   onClose,
   onSave,
   onDelete,
 }: {
   entry: Expense | "new";
+  saveError?: string;
   busy: boolean;
   onClose: () => void;
   onSave: (entry: Expense) => void;
@@ -696,6 +705,7 @@ function ExpenseEditor({
 }) {
   const { theme, styles: s } = useThemedStyles(createStyles);
   const existing = entry === "new" ? null : entry;
+  const [newId] = useState(id);
   const [item, setItem] = useState(existing?.item || "");
   const [amount, setAmount] = useState(
     existing ? String(existing.amountMinor / 100) : "",
@@ -769,7 +779,9 @@ function ExpenseEditor({
                 </Pressable>
               ))}
             </View>
-            {error ? <Text style={s.errorText}>{error}</Text> : null}
+            {error || saveError ? (
+              <Text style={s.errorText}>{error || saveError}</Text>
+            ) : null}
             <Action
               label={busy ? "保存中…" : "儲存消費紀錄"}
               disabled={busy}
@@ -785,7 +797,7 @@ function ExpenseEditor({
                   onSave({
                     ...existing,
                     ...draft,
-                    id: existing?.id || id(),
+                    id: existing?.id || newId,
                     createdAt: existing?.createdAt || new Date().toISOString(),
                     source: existing?.source || "manual",
                   });

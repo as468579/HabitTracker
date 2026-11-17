@@ -21,7 +21,8 @@ import ExpenseChat from "./ExpenseChat";
 import AppearanceSettings from "./AppearanceSettings";
 import type { AppTheme, UiStyles } from "./theme";
 import { useThemedStyles, ThemeToggle } from "./Appearance";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useCloudStore } from "./useCloudStore";
+import { httpTransport } from "./cloud-store";
 import { Feather } from "@expo/vector-icons";
 import Svg, { Circle } from "react-native-svg";
 import {
@@ -32,7 +33,6 @@ import {
   frequencies,
   Frequency,
   isDone,
-  makeDemo,
   periodStart,
   readStore,
   shiftPeriod,
@@ -58,7 +58,8 @@ function getCategoryStyles(theme: AppTheme): Record<
     生活: { ...theme.categories.生活, icon: "sun" },
   };
 }
-const STORAGE_KEY = "slowday.tracker.v1";
+const taskTransport = httpTransport<Store>("tasks", readStore);
+const emptyTasks: Store = { version: 1, tasks: [], demo: false };
 type Tab = "dashboard" | "tasks" | "expenses" | "settings";
 function Icon({
   name,
@@ -173,14 +174,9 @@ export default function TrackerApp() {
   const { width } = useWindowDimensions();
   const desktop = width >= 1000;
   const roomy = width >= 700;
-  const [store, setStore] = useState<Store>({
-    version: 1,
-    tasks: [],
-    demo: false,
-  });
-  const [ready, setReady] = useState(false);
-  const [storageError, setStorageError] = useState("");
-  const [loadFailed, setLoadFailed] = useState(false);
+  const cloud = useCloudStore(taskTransport, emptyTasks);
+  const { data: store, ready, error: storageError } = cloud;
+  const loadFailed = cloud.blocked || cloud.busy;
   const [today, setToday] = useState(new Date());
   const params = useLocalSearchParams<{ tab?: string }>();
   const tab: Tab =
@@ -194,44 +190,14 @@ export default function TrackerApp() {
   const [anchor, setAnchor] = useState(new Date());
   const [filter, setFilter] = useState<"all" | "open" | "done">("all");
   const [search, setSearch] = useState("");
-  const [editor, setEditor] = useState<Task | "new" | null>(null);
+  const [editor, setEditorRaw] = useState<Task | "new" | null>(null);
+  const editorRevision = useRef(0);
+  const setEditor = (next: Task | "new" | null) => {
+    if (next !== null) editorRevision.current = cloud.revision;
+    setEditorRaw(next);
+  };
   const [confirm, setConfirm] = useState<Task | "reset" | null>(null);
   const [notice, setNotice] = useState("");
-  const saveQueue = useRef(Promise.resolve());
-  useEffect(() => {
-    let mounted = true;
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((raw) => {
-        if (mounted) setStore(raw ? readStore(raw) : makeDemo());
-      })
-      .catch(() => {
-        if (mounted) {
-          setLoadFailed(true);
-          setStorageError(
-            "無法讀取裝置資料。請重新開啟 App 再試，原始資料尚未覆寫。",
-          );
-        }
-      })
-      .finally(() => {
-        if (mounted) setReady(true);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!ready || loadFailed) return;
-    const data = JSON.stringify(store);
-    saveQueue.current = saveQueue.current
-      .catch(() => {})
-      .then(() => AsyncStorage.setItem(STORAGE_KEY, data))
-      .then(() => setStorageError(""))
-      .catch(() =>
-        setStorageError(
-          "儲存失敗，目前變更尚未保存。請檢查裝置儲存空間後重試。",
-        ),
-      );
-  }, [store, ready, loadFailed]);
   useEffect(() => {
     const update = () => setToday(new Date());
     const timer = setInterval(update, 30000);
@@ -283,12 +249,14 @@ export default function TrackerApp() {
     { key: "expenses", name: "記帳室", icon: "message-circle" },
     { key: "settings", name: "設定", icon: "sliders" },
   ];
-  const updateTask = (task: Task, date = anchor) => {
+  const updateTask = async (task: Task, date = anchor) => {
     if (loadFailed) return;
-    setStore((old) => ({
-      ...old,
-      tasks: old.tasks.map((t) => (t.id === task.id ? toggleTask(t, date) : t)),
-    }));
+    await cloud.controller.save({
+      ...store,
+      tasks: store.tasks.map((t) =>
+        t.id === task.id ? toggleTask(t, date) : t,
+      ),
+    });
   };
   if (!ready)
     return (
@@ -388,8 +356,12 @@ export default function TrackerApp() {
                 <Text style={{ color: theme.colors.danger, flex: 1 }}>
                   {storageError}
                 </Text>
-                {!loadFailed && (
-                  <Pressable onPress={() => setStore((old) => ({ ...old }))}>
+                {!cloud.busy && (
+                  <Pressable
+                    onPress={() => {
+                      void cloud.controller.refresh();
+                    }}
+                  >
                     <Text style={s.link}>重試</Text>
                   </Pressable>
                 )}
@@ -870,9 +842,11 @@ export default function TrackerApp() {
                 <AppearanceSettings />
                 <WebAppPanel />
                 <View style={s.card}>
-                  <Text style={s.cardTitle}>資料與任務設定</Text>
+                  <Text style={s.cardTitle}>雲端同步與任務設定</Text>
                   <Text style={[s.subtitle, { marginVertical: 16 }]}>
-                    資料保存在目前裝置；網頁版依瀏覽器與網址分開儲存，未啟用跨裝置同步。
+                    任務、完成紀錄與記帳資料保存在遠端資料庫。同一個 ChatGPT
+                    帳號可在手機與電腦同步；連線時每 10 秒及回到 App
+                    時重新同步。
                   </Text>
                   <View style={s.settingLine}>
                     <Text style={s.bold}>目前任務</Text>
@@ -895,7 +869,7 @@ export default function TrackerApp() {
                 <View style={s.card}>
                   <Text style={s.cardTitle}>重新開始</Text>
                   <Text style={[s.subtitle, { marginVertical: 16 }]}>
-                    清除所有任務及完成紀錄，無法復原。
+                    從雲端清除所有任務及完成紀錄，會同步到其他裝置，無法復原。
                   </Text>
                   <Button
                     title={
@@ -963,18 +937,28 @@ export default function TrackerApp() {
           task={editor}
           frequency={frequency}
           disabled={loadFailed}
+          saveError={storageError}
           onClose={() => setEditor(null)}
           onDelete={(t) => {
             setEditor(null);
             setConfirm(t);
           }}
-          onSave={(task) => {
-            setStore((old) => ({
-              ...old,
-              tasks: old.tasks.some((t) => t.id === task.id)
-                ? old.tasks.map((t) => (t.id === task.id ? task : t))
-                : [...old.tasks, task],
-            }));
+          onSave={async (task) => {
+            const latest = cloud.controller.getSnapshot().data;
+            const saved = await cloud.controller.save(
+              {
+                ...latest,
+                demo: false,
+                tasks: latest.tasks.some((t) => t.id === task.id)
+                  ? latest.tasks.map((t) => (t.id === task.id ? task : t))
+                  : [...latest.tasks, task],
+              },
+              editorRevision.current,
+            );
+            if (!saved) {
+              editorRevision.current = cloud.controller.getSnapshot().revision;
+              return;
+            }
             setFrequency(task.frequency);
             setAnchor(today);
             setFilter("all");
@@ -1002,7 +986,7 @@ export default function TrackerApp() {
             </Text>
             <Text style={[s.subtitle, { marginVertical: 16 }]}>
               {confirm === "reset"
-                ? "所有任務與完成紀錄將永久清除，無法復原。"
+                ? "所有裝置的任務與完成紀錄將從雲端清除，無法復原。"
                 : "這個任務與它的完成紀錄會一併刪除，無法復原。"}
             </Text>
             <View style={s.row}>
@@ -1013,18 +997,19 @@ export default function TrackerApp() {
               />
               <Button
                 title="確認清除"
-                onPress={() => {
+                onPress={async () => {
                   if (loadFailed) return;
-                  setStore((old) =>
+                  const saved = await cloud.controller.save(
                     confirm === "reset"
-                      ? { version: 1, tasks: [], demo: false }
+                      ? emptyTasks
                       : {
-                          ...old,
-                          tasks: old.tasks.filter(
+                          ...store,
+                          tasks: store.tasks.filter(
                             (t) => t.id !== (confirm as Task).id,
                           ),
                         },
                   );
+                  if (!saved) return;
                   setConfirm(null);
                   setNotice("任務已清除");
                 }}
@@ -1049,11 +1034,13 @@ function TaskEditor({
   onSave,
   onDelete,
   disabled,
+  saveError,
 }: {
   task: Task | "new" | null;
   frequency: Frequency;
   onClose: () => void;
   onSave: (t: Task) => void;
+  saveError?: string;
   onDelete: (t: Task) => void;
   disabled: boolean;
 }) {
@@ -1070,6 +1057,7 @@ function TaskEditor({
   );
   const [error, setError] = useState("");
   const existing = task && task !== "new" ? task : null;
+  const [newId] = useState(() => `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
 
   return (
     <Modal
@@ -1176,9 +1164,9 @@ function TaskEditor({
               multiline
               style={[s.input, { minHeight: 90, textAlignVertical: "top" }]}
             />
-            {error ? (
+            {error || saveError ? (
               <Text style={{ color: theme.colors.danger, marginBottom: 15 }}>
-                {error}
+                {error || saveError}
               </Text>
             ) : null}
             <Button
@@ -1194,9 +1182,7 @@ function TaskEditor({
                   return;
                 }
                 onSave({
-                  id:
-                    existing?.id ||
-                    `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                  id: existing?.id || newId,
                   title: title.trim(),
                   note: note.trim(),
                   frequency: freq,
